@@ -209,7 +209,7 @@ def get_data(data_iters, opts, get_rand=False):
     tmp_states, tmp_actions, tmp_neg_actions, sample = [], [], [], None
     states, actions, neg_actions = [], [], []
     for data_iter in data_iters:
-        s, a, na = data_iter.next()
+        s, a, na = next(data_iter)
         tmp_states.append(s)
         tmp_actions.append(a)
         tmp_neg_actions.append(na)

@@ -186,3 +186,4 @@ def init_parser():
     train_param.add_option('--min_lr', action='store', type=float, default=0.00001)
 
     return parser
+

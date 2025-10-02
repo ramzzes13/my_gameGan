@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python main_parallel.py \
+python3 main_parallel.py \
  --data vizdoom:./data/vizdoom \
  --log_dir ./results/ \
  --num_steps 32 \
