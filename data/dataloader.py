@@ -6,10 +6,10 @@ Authors: Seung Wook Kim, Yuhao Zhou, Jonah Philion, Antonio Torralba, Sanja Fidl
 import os
 import sys
 import numpy as np
-import torch
 import torch.utils.data as data_utils
 import cv2
 import random
+import torch
 
 sys.path.insert(0, './data')
 sys.path.append('../../')
@@ -25,14 +25,22 @@ def get_custom_dataset(opts=None, set_type=0, force_noshuffle=False, getLoader=T
         shuffle = False
 
     curdata, datadir = opts.data.split(':')
-    if 'custom' == curdata:  # Добавьте поддержку custom данных
+
+    # ВАЖНО: переменная dataset должна быть определена в любом случае
+    dataset = None
+
+    if 'custom' == curdata:
         dataset = custom_dataset(opts, set_type=set_type, datadir=datadir)
     elif 'pacman' == curdata or 'pacman_maze' == curdata:
         dataset = berkeley_pacman_dataset(opts, set_type=set_type, datadir=datadir)
     elif 'vizdoom' == curdata:
-        dataset = vizdoom_dataset(opts,set_type=set_type, datadir=datadir)
+        dataset = vizdoom_dataset(opts, set_type=set_type, datadir=datadir)
     else:
         print('Unsupported Dataset')
+
+    # Теперь проверяем что dataset создан
+    if dataset is None:
+        print('Error: dataset was not created')
         exit(-1)
 
     if getLoader:
@@ -41,6 +49,67 @@ def get_custom_dataset(opts=None, set_type=0, force_noshuffle=False, getLoader=T
         return dloader
     else:
         return dataset
+
+class custom_dataset(data_utils.Dataset):
+    def __init__(self, opts, set_type=0, datadir=''):
+        self.opts = opts
+        self.set_type = set_type
+
+        # Загружаем ваш .pt файл напрямую
+        self.data = torch.load(datadir, weights_only=False)
+        self.frames = self.data['frames']  # [total_frames, H, W, C]
+        self.actions = self.data['actions']  # [total_frames]
+        self.valid_indices = self.data['valid_indices']  # список валидных индексов
+
+        # Разделение на train/val
+        num_samples = len(self.valid_indices)
+        if set_type == 0:  # train
+            self.indices = self.valid_indices[:int(0.9 * num_samples)]
+        else:  # val
+            self.indices = self.valid_indices[int(0.9 * num_samples):]
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = self.indices[idx]
+        context_length = self.opts.num_steps
+
+        states = []
+        actions = []
+        neg_actions = []
+
+        # Получаем последовательность кадров
+        for i in range(context_length):
+            frame_idx = real_idx - context_length + i
+            frame = self.frames[frame_idx]
+            action = self.actions[frame_idx]
+
+            # Предобработка как в оригинальном коде
+            # Изменим размер до 64x64 если нужно
+            if frame.shape[0] != 64 or frame.shape[1] != 64:
+                import cv2
+                frame = cv2.resize(frame, (64, 64))
+
+            s_t = (np.transpose(frame, axes=(2, 0, 1)) / 255.).astype('float32')
+            s_t = (s_t - 0.5) / 0.5
+
+            # Конвертируем действие в one-hot
+            a_t = np.zeros(self.opts.action_space).astype('float32')
+            a_t[action] = 1
+
+            # Негативное действие
+            false_a_idx = random.randint(0, self.opts.action_space - 1)
+            while false_a_idx == action:
+                false_a_idx = random.randint(0, self.opts.action_space - 1)
+            false_a_t = np.zeros(a_t.shape).astype('float32')
+            false_a_t[false_a_idx] = 1
+
+            states.append(s_t)
+            actions.append(a_t)
+            neg_actions.append(false_a_t)
+
+        return states, actions, neg_actions
 
 class vizdoom_dataset(data_utils.Dataset):
 
@@ -189,68 +258,6 @@ class berkeley_pacman_dataset(data_utils.Dataset):
             samples.append(cur_sample)
             i = i + 1
 
-
-        return states, actions, neg_actions
-
-
-class custom_dataset(data_utils.Dataset):
-    def __init__(self, opts, set_type=0, datadir=''):
-        self.opts = opts
-        self.set_type = set_type
-
-        # Загружаем ваш .pt файл напрямую
-        self.data = torch.load(datadir, weights_only=False)
-        self.frames = self.data['frames']  # [total_frames, H, W, C]
-        self.actions = self.data['actions']  # [total_frames]
-        self.valid_indices = self.data['valid_indices']  # список валидных индексов
-
-        # Разделение на train/val
-        num_samples = len(self.valid_indices)
-        if set_type == 0:  # train
-            self.indices = self.valid_indices[:int(0.9 * num_samples)]
-        else:  # val
-            self.indices = self.valid_indices[int(0.9 * num_samples):]
-
-    def __len__(self):
-        return len(self.indices)
-
-    def __getitem__(self, idx):
-        real_idx = self.indices[idx]
-        context_length = self.opts.num_steps
-
-        states = []
-        actions = []
-        neg_actions = []
-
-        # Получаем последовательность кадров
-        for i in range(context_length):
-            frame_idx = real_idx - context_length + i
-            frame = self.frames[frame_idx]
-            action = self.actions[frame_idx]
-
-            # Предобработка как в оригинальном коде
-            # Изменим размер до 64x64 если нужно
-            if frame.shape[0] != 64 or frame.shape[1] != 64:
-                import cv2
-                frame = cv2.resize(frame, (64, 64))
-
-            s_t = (np.transpose(frame, axes=(2, 0, 1)) / 255.).astype('float32')
-            s_t = (s_t - 0.5) / 0.5
-
-            # Конвертируем действие в one-hot
-            a_t = np.zeros(self.opts.action_space).astype('float32')
-            a_t[action] = 1
-
-            # Негативное действие
-            false_a_idx = random.randint(0, self.opts.action_space - 1)
-            while false_a_idx == action:
-                false_a_idx = random.randint(0, self.opts.action_space - 1)
-            false_a_t = np.zeros(a_t.shape).astype('float32')
-            false_a_t[false_a_idx] = 1
-
-            states.append(s_t)
-            actions.append(a_t)
-            neg_actions.append(false_a_t)
 
         return states, actions, neg_actions
 
